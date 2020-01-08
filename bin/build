@@ -1,12 +1,61 @@
 #!/usr/bin/env bash
 set -eo pipefail
 
+buildpack_directory=$(cd "$(dirname "$0")/.."; pwd)
 layers_directory=$1
 
-echo "---> JVM Buildpack"
+# shellcheck source=lib/logging.sh
+source "${buildpack_directory}/lib/logging.sh"
+
+log_header "JVM Buildpack"
+log_info "Version 0.0.1"
+
+if [[ ! -f $buildpack_directory/bin/jdk-version-tool ]]; then
+  # shellcheck source=lib/bootstrap.sh
+  source "${buildpack_directory}/lib/bootstrap.sh"
+  bootstrap "${buildpack_directory}" "${layers_directory}"
+else
+  export PATH="${PATH}:${buildpack_directory}/bin"
+fi
+
+log_header "Downloading JDK"
 
 jvm_layer_directory="${layers_directory}/jvm"
 mkdir -p "${jvm_layer_directory}"
+
+default_version_string="8"
+version_string=$default_version_string
+
+if ! version_string=$(jdk-version-tool read-version-string "system.properties"); then
+  log_notice "You are implicitly using Heroku's default Java version: ${default_version_string}" "This is not problem but Heroku's default version might change in the future.
+We recommend explicitly setting your required Java version as described in the Dev Center:
+
+https://devcenter.heroku.com/articles/java-support#specifying-a-java-version"
+fi
+
+selected_jdk_version=$(jdk-version-tool version-from-version-string "${version_string}")
+selected_jdk_vendor=$(jdk-version-tool vendor-from-version-string "${version_string}")
+
+if ! jdk_url=$(jdk-version-tool jdk-download-url "${CNB_STACK_ID}" "${selected_jdk_vendor}" "${selected_jdk_version}"); then
+  log_error "Unsupported Java version ${selected_jdk_vendor} ${selected_jdk_version}" "Please check your system.properties file to ensure the java.runtime.version
+is among the list of supported version on the Dev Center:
+https://devcenter.heroku.com/articles/java-support#supported-java-versions
+You can also remove the system.properties from your repo to install
+the default ${default_version_string} version.
+If you continue to have trouble, you can open a support ticket here:
+https://help.heroku.com
+
+Thanks,
+Heroku"
+fi
+
+local_jdk_tarball="$(mktemp /tmp/jvm.tar.gz.XXXXXX)"
+
+curl --retry 3 --silent --show-error --location "${jdk_url}" --output "${local_jdk_tarball}"
+
+tar -pxzf "${local_jdk_tarball}" -C "${jvm_layer_directory}"
+
+rm "${local_jdk_tarball}"
 
 jvm_layer_toml="${jvm_layer_directory}.toml"
 
@@ -15,13 +64,5 @@ launch = true
 cache = false
 build = true
 TOML
-
-jdk_url=https://lang-jvm.s3.amazonaws.com/jdk/heroku-18/openjdk11.0.5.tar.gz
-local_jdk_tarball="$(mktemp /tmp/jvm.tar.gz.XXXXXX)"
-
-curl --retry 3 --silent --show-error --location "${jdk_url}" --output "${local_jdk_tarball}"
-
-tar -pxzf "${local_jdk_tarball}" -C "${jvm_layer_directory}"
-rm "${local_jdk_tarball}"
 
 exit 0
