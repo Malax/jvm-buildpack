@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+# This buildpack only installs the JDK and JRE for subsequent buildpacks and runtime. It does not detect if it needs to
+# be run. For that reason, it should only be used explicitly or as part of a meta-buildpack.
+exit 0

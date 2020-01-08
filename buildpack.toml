@@ -1,0 +1,9 @@
+api = "0.2"
+
+[buildpack]
+id = "malax/jvm"
+name = "JVM Buildpack"
+version = "0.0.1"
+
+[[stacks]]
+id = "heroku-18"

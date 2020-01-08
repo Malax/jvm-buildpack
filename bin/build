@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+layers_directory=$1
+
+echo "---> JVM Buildpack"
+
+jvm_layer_directory="${layers_directory}/jvm"
+mkdir -p "${jvm_layer_directory}"
+
+jvm_layer_toml="${jvm_layer_directory}.toml"
+
+cat << TOML > "${jvm_layer_toml}"
+launch = true
+cache = false
+build = true
+TOML
+
+jdk_url=https://lang-jvm.s3.amazonaws.com/jdk/heroku-18/openjdk11.0.5.tar.gz
+local_jdk_tarball="$(mktemp /tmp/jvm.tar.gz.XXXXXX)"
+
+curl --retry 3 --silent --show-error --location "${jdk_url}" --output "${local_jdk_tarball}"
+
+tar -pxzf "${local_jdk_tarball}" -C "${jvm_layer_directory}"
+rm "${local_jdk_tarball}"
+
+exit 0
