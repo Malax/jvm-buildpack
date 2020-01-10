@@ -18,34 +18,40 @@ else
   export PATH="${PATH}:${buildpack_directory}/bin"
 fi
 
-log_header "Downloading JDK"
+log_header "Determining JVM version"
 
 jvm_layer_directory="${layers_directory}/jvm"
 mkdir -p "${jvm_layer_directory}"
 
-default_version_string="1.8"
+cat "${jvm_layer_directory}.toml"
 
-if ! version_string=$(jdk-version-tool read-version-string "system.properties"); then
-  version_string=$default_version_string
-  log_notice "You are implicitly using Heroku's default Java version: ${default_version_string}" "We recommend explicitly setting your required Java version as described in the Dev Center:
+default_version_definition="1.8"
+is_default_version_definition=false
+
+if ! version_definition=$(jdk-version-tool read-version-definition "system.properties"); then
+  version_definition=$default_version_definition
+  is_default_version_definition=true
+  log_notice "You are implicitly using Heroku's default Java version: ${default_version_definition}" "We recommend explicitly setting your required Java version as described in the Dev Center:
 https://devcenter.heroku.com/articles/java-support#specifying-a-java-version"
 fi
 
-selected_jdk_version=$(jdk-version-tool version-from-version-string "${version_string}")
-selected_jdk_vendor=$(jdk-version-tool vendor-from-version-string "${version_string}")
+selected_jdk_version=$(jdk-version-tool version-from-version-definition "${version_definition}")
+selected_jdk_vendor=$(jdk-version-tool vendor-from-version-definition "${version_definition}")
 
 if ! jdk_url=$(jdk-version-tool jdk-download-url "${CNB_STACK_ID}" "${selected_jdk_vendor}" "${selected_jdk_version}"); then
-  log_error "Unsupported Java version ${version_string} (${selected_jdk_vendor} ${selected_jdk_version})" "Please check your system.properties file to ensure the java.runtime.version
+  log_error "Unsupported Java version ${version_definition} (${selected_jdk_vendor} ${selected_jdk_version})" "Please check your system.properties file to ensure the java.runtime.version
 is among the list of supported version on the Dev Center:
 https://devcenter.heroku.com/articles/java-support#supported-java-versions
 You can also remove the system.properties from your repo to install
-the default ${default_version_string} version.
+the default ${default_version_definition} version.
 If you continue to have trouble, you can open a support ticket here:
 https://help.heroku.com
 
 Thanks,
 Heroku"
 fi
+
+log_header "Installing JDK (${selected_jdk_vendor} ${selected_jdk_version})"
 
 local_jdk_tarball="$(mktemp /tmp/jvm.tar.gz.XXXXXX)"
 
@@ -61,6 +67,16 @@ cat << TOML > "${jvm_layer_toml}"
 launch = true
 cache = false
 build = true
+
+[metadata]
+vendor = "${selected_jdk_vendor}"
+version = "${selected_jdk_version}"
 TOML
+
+# Remember if the version was based on a definition given by the user and which one it was.
+# This helps us to discern between explicit and implicit major version updates when we restore the cached layer.
+if [[ "${is_default_version_definition}" == false ]]; then
+  echo "user_version_definition = ${version_definition}" >> "${jvm_layer_toml}"
+fi
 
 exit 0
