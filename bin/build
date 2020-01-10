@@ -23,13 +23,11 @@ log_header "Downloading JDK"
 jvm_layer_directory="${layers_directory}/jvm"
 mkdir -p "${jvm_layer_directory}"
 
-default_version_string="8"
-version_string=$default_version_string
+default_version_string="1.8"
 
 if ! version_string=$(jdk-version-tool read-version-string "system.properties"); then
-  log_notice "You are implicitly using Heroku's default Java version: ${default_version_string}" "This is not problem but Heroku's default version might change in the future.
-We recommend explicitly setting your required Java version as described in the Dev Center:
-
+  version_string=$default_version_string
+  log_notice "You are implicitly using Heroku's default Java version: ${default_version_string}" "We recommend explicitly setting your required Java version as described in the Dev Center:
 https://devcenter.heroku.com/articles/java-support#specifying-a-java-version"
 fi
 
@@ -37,7 +35,7 @@ selected_jdk_version=$(jdk-version-tool version-from-version-string "${version_s
 selected_jdk_vendor=$(jdk-version-tool vendor-from-version-string "${version_string}")
 
 if ! jdk_url=$(jdk-version-tool jdk-download-url "${CNB_STACK_ID}" "${selected_jdk_vendor}" "${selected_jdk_version}"); then
-  log_error "Unsupported Java version ${selected_jdk_vendor} ${selected_jdk_version}" "Please check your system.properties file to ensure the java.runtime.version
+  log_error "Unsupported Java version ${version_string} (${selected_jdk_vendor} ${selected_jdk_version})" "Please check your system.properties file to ensure the java.runtime.version
 is among the list of supported version on the Dev Center:
 https://devcenter.heroku.com/articles/java-support#supported-java-versions
 You can also remove the system.properties from your repo to install
