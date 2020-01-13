@@ -18,12 +18,12 @@ else
   export PATH="${PATH}:${buildpack_directory}/bin"
 fi
 
+########################################################################################################################
 log_header "Determining JVM version"
+########################################################################################################################
 
 jvm_layer_directory="${layers_directory}/jvm"
 mkdir -p "${jvm_layer_directory}"
-
-cat "${jvm_layer_directory}.toml"
 
 default_version_definition="1.8"
 is_default_version_definition=false
@@ -49,16 +49,29 @@ https://help.heroku.com
 
 Thanks,
 Heroku"
+  exit 1
 fi
 
+jdk_signature_url="${jdk_url}.asc"
+
+########################################################################################################################
 log_header "Installing JDK (${selected_jdk_vendor} ${selected_jdk_version})"
+########################################################################################################################
 
 local_jdk_tarball="$(mktemp /tmp/jvm.tar.gz.XXXXXX)"
+local_jdk_tarball_signature="$(mktemp /tmp/jvm.gpg.XXXXXX)"
 
 curl --retry 3 --silent --show-error --location "${jdk_url}" --output "${local_jdk_tarball}"
+curl --retry 3 --silent --show-error --location "${jdk_signature_url}" --output "${local_jdk_tarball_signature}"
 
+gpg --no-tty --batch --import "${buildpack_directory}/.gnupg/jvm.asc" > /dev/null 2>&1
+
+if ! gpg --no-tty --batch --verify "${local_jdk_tarball_signature}" "${local_jdk_tarball}" > /dev/null 2>&1; then
+  log_error "Invalid GPG signature" "We could not verify the authenticity of the downloaded JDK."
+  exit 1
+fi
+q
 tar -pxzf "${local_jdk_tarball}" -C "${jvm_layer_directory}"
-
 rm "${local_jdk_tarball}"
 
 jvm_layer_toml="${jvm_layer_directory}.toml"

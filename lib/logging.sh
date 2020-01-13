@@ -16,8 +16,6 @@ log_error() {
 
   echo -e "\n${color}Error: ${1:-"Unknown Error"}${no_color}"
   echo -e "${2}\n"
-
-  exit 1
 }
 
 log_notice() {
