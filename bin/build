@@ -6,6 +6,8 @@ layers_directory=$1
 
 # shellcheck source=lib/logging.sh
 source "${buildpack_directory}/lib/logging.sh"
+# shellcheck source=lib/toml.sh
+source "${buildpack_directory}/lib/toml.sh"
 
 log_header "JVM Buildpack"
 log_info "Version 0.0.1"
@@ -19,11 +21,59 @@ else
 fi
 
 ########################################################################################################################
+# Installing Toolbox
+########################################################################################################################
+toolbox_layer_directory="${layers_directory}/toolbox"
+toolbox_layer_toml="${toolbox_layer_directory}.toml"
+
+mkdir -p "${toolbox_layer_directory}/bin"
+export PATH="${PATH}:${toolbox_layer_directory}/bin"
+
+jq_url="https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64"
+jq_sha="c6b3a7d7d3e7b70c6f51b706a3b90bd01833846c54d32ca32f0027f00226ff6d"
+local_jq="${toolbox_layer_directory}/bin/jq"
+
+yj_url="https://github.com/sclevine/yj/releases/download/v2.0/yj-linux"
+yj_sha="db2b94b7fbf0941b6af9d30c1e7d43e41be62edad59d711b5c760ad5b13f7d6c"
+local_yj="${toolbox_layer_directory}/bin/yj"
+
+if [[ ! -x $local_jq ]] || [[ "$(toml_get_key "${toolbox_layer_toml}" ".metadata.jq_sha")" != "${jq_sha}" ]]; then
+  curl --retry 3 --silent --show-error --location "${jq_url}" --output "${local_jq}"
+  chmod +x "${local_jq}"
+
+  if [[ "$(shasum -a 256 "${local_jq}" | awk '{ print $1 }')" != "${jq_sha}" ]]; then
+    log_error "Invalid SHA" "We could not verify the authenticity of the downloaded 'jq' binary."
+    exit 1
+  fi
+fi
+
+if [[ ! -x $local_yj ]] || [[ "$(toml_get_key "${toolbox_layer_toml}" ".metadata.yj_sha")" != "${yj_sha}" ]]; then
+  curl --retry 3 --silent --show-error --location "${yj_url}" --output "${local_yj}"
+  chmod +x "${local_yj}"
+
+  if [[ "$(shasum -a 256 "${local_yj}" | awk '{ print $1 }')" != "${yj_sha}" ]]; then
+    log_error "Invalid SHA" "We could not verify the authenticity of the downloaded 'yj' binary."
+    exit 1
+  fi
+fi
+
+if [[ -f $toolbox_layer_toml ]]; then
+  rm "${toolbox_layer_toml}"
+fi
+
+cat << TOML > "${toolbox_layer_toml}"
+launch = false
+cache = true
+build = true
+
+[metadata]
+jq_sha="${jq_sha}"
+yj_sha="${yj_sha}"
+TOML
+
+########################################################################################################################
 log_header "Determining JVM version"
 ########################################################################################################################
-
-jvm_layer_directory="${layers_directory}/jvm"
-mkdir -p "${jvm_layer_directory}"
 
 default_version_definition="1.8"
 is_default_version_definition=false
@@ -52,28 +102,35 @@ Heroku"
   exit 1
 fi
 
-jdk_signature_url="${jdk_url}.asc"
-
 ########################################################################################################################
 log_header "Installing JDK (${selected_jdk_vendor} ${selected_jdk_version})"
 ########################################################################################################################
 
+# Setup layer
+jvm_layer_directory="${layers_directory}/jvm"
+mkdir -p "${jvm_layer_directory}"
+
+# Download JDK
 local_jdk_tarball="$(mktemp /tmp/jvm.tar.gz.XXXXXX)"
+curl --retry 3 --silent --show-error --location "${jdk_url}" --output "${local_jdk_tarball}"
+
+# Download and verify JDK signature with GPG
+jdk_signature_url="${jdk_url}.asc"
 local_jdk_tarball_signature="$(mktemp /tmp/jvm.gpg.XXXXXX)"
 
-curl --retry 3 --silent --show-error --location "${jdk_url}" --output "${local_jdk_tarball}"
-curl --retry 3 --silent --show-error --location "${jdk_signature_url}" --output "${local_jdk_tarball_signature}"
-
 gpg --no-tty --batch --import "${buildpack_directory}/.gnupg/jvm.asc" > /dev/null 2>&1
+curl --retry 3 --silent --show-error --location "${jdk_signature_url}" --output "${local_jdk_tarball_signature}"
 
 if ! gpg --no-tty --batch --verify "${local_jdk_tarball_signature}" "${local_jdk_tarball}" > /dev/null 2>&1; then
   log_error "Invalid GPG signature" "We could not verify the authenticity of the downloaded JDK."
   exit 1
 fi
-q
+
+# Extract JDK to layer
 tar -pxzf "${local_jdk_tarball}" -C "${jvm_layer_directory}"
 rm "${local_jdk_tarball}"
 
+# Write layer TOML
 jvm_layer_toml="${jvm_layer_directory}.toml"
 
 cat << TOML > "${jvm_layer_toml}"
