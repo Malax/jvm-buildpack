@@ -10,7 +10,6 @@ source "${buildpack_directory}/lib/logging.sh"
 source "${buildpack_directory}/lib/toml.sh"
 
 log_header "JVM Buildpack"
-log_info "Version 0.0.1"
 
 if [[ ! -f $buildpack_directory/bin/jdk-version-tool ]]; then
   # shellcheck source=lib/bootstrap.sh
@@ -21,7 +20,7 @@ else
 fi
 
 ########################################################################################################################
-# Installing Toolbox
+# Installing/Reusing Toolbox
 ########################################################################################################################
 toolbox_layer_directory="${layers_directory}/toolbox"
 toolbox_layer_toml="${toolbox_layer_directory}.toml"
