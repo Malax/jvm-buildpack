@@ -24,3 +24,7 @@ calculate_java_version_based_opts() {
     echo ""
   fi
 }
+
+# This differs from heroku/jvm, we need a way for the user to disable our defaults
+JAVA_TOOL_OPTIONS="$(echo "$(calculate_dyno_size_based_opts) $(calculate_java_version_based_opts)" | tr -s '[:space:]')"
+export JAVA_TOOL_OPTIONS
