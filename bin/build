@@ -71,7 +71,7 @@ yj_sha="${yj_sha}"
 TOML
 
 ########################################################################################################################
-log_header "Determining JVM version"
+log_header "Determining JDK version"
 ########################################################################################################################
 
 default_version_definition="1.8"
@@ -105,36 +105,77 @@ fi
 log_header "Installing JDK (${selected_jdk_vendor} ${selected_jdk_version})"
 ########################################################################################################################
 
-# Setup layer
 jvm_layer_directory="${layers_directory}/jvm"
-mkdir -p "${jvm_layer_directory}"
-
-# Download JDK
-local_jdk_tarball="$(mktemp /tmp/jvm.tar.gz.XXXXXX)"
-curl --retry 3 --silent --show-error --location "${jdk_url}" --output "${local_jdk_tarball}"
-
-# Download and verify JDK signature with GPG
-jdk_signature_url="${jdk_url}.asc"
-local_jdk_tarball_signature="$(mktemp /tmp/jvm.gpg.XXXXXX)"
-
-gpg --no-tty --batch --import "${buildpack_directory}/.gnupg/jvm.asc" > /dev/null 2>&1
-curl --retry 3 --silent --show-error --location "${jdk_signature_url}" --output "${local_jdk_tarball_signature}"
-
-if ! gpg --no-tty --batch --verify "${local_jdk_tarball_signature}" "${local_jdk_tarball}" > /dev/null 2>&1; then
-  log_error "Invalid GPG signature" "We could not verify the authenticity of the downloaded JDK."
-  exit 1
-fi
-
-# Extract JDK to layer
-tar -pxzf "${local_jdk_tarball}" -C "${jvm_layer_directory}"
-rm "${local_jdk_tarball}"
-
-# Write layer TOML
 jvm_layer_toml="${jvm_layer_directory}.toml"
 
-cat << TOML > "${jvm_layer_toml}"
+cached_jdk_version="$(toml_get_key "${jvm_layer_toml}" ".metadata.version")"
+cached_jdk_vendor="$(toml_get_key "${jvm_layer_toml}" ".metadata.vendor")"
+
+if [[ "${cached_jdk_version}" != "${selected_jdk_version}" ]] ||
+   [[ "${cached_jdk_vendor}" != "${selected_jdk_vendor}" ]] ||
+   [[ -n $BP_JVM_REINSTALL_JDK ]]; then
+
+  if [[ -n $BP_JVM_REINSTALL_JDK ]]; then
+    log_info "JDK reinstall explicitly requested"
+  else
+    log_info "JDK version changed between builds from ${cached_jdk_vendor} ${cached_jdk_version} to ${selected_jdk_vendor} ${selected_jdk_version}. Installing new version."
+  fi
+
+  # Remove cached layer and metadata
+  if [[ -d $jvm_layer_directory ]]; then
+    rm -rf "${jvm_layer_directory}"
+  fi
+
+  if [[ -f $jvm_layer_toml ]]; then
+    rm "${jvm_layer_toml}"
+  fi
+
+  mkdir -p "${jvm_layer_directory}"
+
+  # Download JDK
+  local_jdk_tarball="$(mktemp /tmp/jvm.tar.gz.XXXXXX)"
+  curl --retry 3 --silent --show-error --location "${jdk_url}" --output "${local_jdk_tarball}"
+
+  # Download and verify JDK signature with GPG
+  jdk_signature_url="${jdk_url}.asc"
+  local_jdk_tarball_signature="$(mktemp /tmp/jvm.gpg.XXXXXX)"
+
+  gpg --no-tty --batch --import "${buildpack_directory}/.gnupg/jvm.asc" > /dev/null 2>&1
+  curl --retry 3 --silent --show-error --location "${jdk_signature_url}" --output "${local_jdk_tarball_signature}"
+
+  if ! gpg --no-tty --batch --verify "${local_jdk_tarball_signature}" "${local_jdk_tarball}" > /dev/null 2>&1; then
+    log_error "Invalid GPG signature" "We could not verify the authenticity of the downloaded JDK."
+    exit 1
+  fi
+
+  # Extract JDK to layer
+  tar -pxzf "${local_jdk_tarball}" -C "${jvm_layer_directory}"
+  rm "${local_jdk_tarball}"
+
+  # Use keystore from stack (JDK 8 and earlier)
+  if [ -f "${jvm_layer_directory}/jre/lib/security/cacerts" ] && [ -f /etc/ssl/certs/java/cacerts ]; then
+    mv "${jvm_layer_directory}/jre/lib/security/cacerts" "${jvm_layer_directory}/jre/lib/security/cacerts.old"
+    ln -s /etc/ssl/certs/java/cacerts "${jvm_layer_directory}/jre/lib/security/cacerts"
+  # Use keystore from stack (JDK 9+)
+  elif [ -f "${jvm_layer_directory}/lib/security/cacerts" ] && [ -f /etc/ssl/certs/java/cacerts ]; then
+    mv "${jvm_layer_directory}/lib/security/cacerts" "${jvm_layer_directory}/lib/security/cacerts.old"
+    ln -s /etc/ssl/certs/java/cacerts "${jvm_layer_directory}/lib/security/cacerts"
+  fi
+
+  # Environment variables
+  mkdir -p "${jvm_layer_directory}/env/"
+  echo -n "${jvm_layer_directory}" >> "${jvm_layer_directory}/env/JAVA_HOME"
+
+  if [[ -d "${jvm_layer_directory}/jre/lib/amd64/server" ]]; then
+    echo -n ":${jvm_layer_directory}/jre/lib/amd64/server" >> "${jvm_layer_directory}/env/LD_LIBRARY_PATH.append"
+  elif [[ -d "${jvm_layer_directory}/lib/server" ]]; then
+    echo -n ":${jvm_layer_directory}/lib/server" >> "${jvm_layer_directory}/env/LD_LIBRARY_PATH.append"
+  fi
+
+  # Write layer TOML
+  cat << TOML > "${jvm_layer_toml}"
 launch = true
-cache = false
+cache = true
 build = true
 
 [metadata]
@@ -142,10 +183,30 @@ vendor = "${selected_jdk_vendor}"
 version = "${selected_jdk_version}"
 TOML
 
-# Remember if the version was based on a definition given by the user and which one it was.
-# This helps us to discern between explicit and implicit major version updates when we restore the cached layer.
-if [[ "${is_default_version_definition}" == false ]]; then
-  echo "user_version_definition = ${version_definition}" >> "${jvm_layer_toml}"
+  # Remember if the version was based on a definition given by the user and which one it was.
+  # This helps us to discern between explicit and implicit major version updates when we restore the cached layer.
+  if [[ "${is_default_version_definition}" == false ]]; then
+    echo "user_version_definition = ${version_definition}" >> "${jvm_layer_toml}"
+  fi
+else
+  log_info "Restoring cached JDK from previous build"
 fi
+
+########################################################################################################################
+# Setup Runtime
+########################################################################################################################
+runtime_layer_directory="${layers_directory}/runtime"
+runtime_layer_toml="${runtime_layer_directory}.toml"
+
+mkdir -p "${runtime_layer_directory}"
+
+cp -r "${buildpack_directory}/opt/runtime/profile.d" "${runtime_layer_directory}"
+
+  # Write layer TOML
+  cat << TOML > "${runtime_layer_toml}"
+launch = true
+cache = false
+build = false
+TOML
 
 exit 0
